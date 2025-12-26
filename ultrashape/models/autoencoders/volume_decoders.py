@@ -34,83 +34,61 @@ from ...utils import logger
 
 
 def extract_near_surface_volume_fn(input_tensor: torch.Tensor, alpha: float):
-    device = input_tensor.device
     D = input_tensor.shape[0]
-    signed_val = 0.0
 
     val = input_tensor + alpha
-    valid_mask = val > -9000  
+    valid_mask = val > -9000
 
-    def get_neighbor(t, shift, axis):
-        """根据指定轴进行位移并保持维度一致"""
+    mask = torch.ones_like(val, dtype=torch.int32) 
+    sign = torch.sign(val.to(torch.float32))
+
+    # Helper to compute neighbor for a single direction
+    def check_neighbor_sign(shift, axis):
         if shift == 0:
-            return t.clone()
-
-        pad_dims = [0, 0, 0, 0, 0, 0]  
-
-        if axis == 0: 
+            return
+            
+        pad_dims = [0, 0, 0, 0, 0, 0]
+        if axis == 0:
             pad_idx = 0 if shift > 0 else 1
             pad_dims[pad_idx] = abs(shift)
-        elif axis == 1: 
+        elif axis == 1:
             pad_idx = 2 if shift > 0 else 3
             pad_dims[pad_idx] = abs(shift)
-        elif axis == 2: 
+        elif axis == 2:
             pad_idx = 4 if shift > 0 else 5
             pad_dims[pad_idx] = abs(shift)
 
-        padded = F.pad(t.unsqueeze(0).unsqueeze(0), pad_dims[::-1], mode='replicate')  # 反转顺序适配F.pad
-
-        slice_dims = [slice(None)] * 3  
-        if axis == 0:  
-            if shift > 0:
-                slice_dims[0] = slice(shift, None)
-            else:
-                slice_dims[0] = slice(None, shift)
-        elif axis == 1: 
-            if shift > 0:
-                slice_dims[1] = slice(shift, None)
-            else:
-                slice_dims[1] = slice(None, shift)
-        elif axis == 2: 
-            if shift > 0:
-                slice_dims[2] = slice(shift, None)
-            else:
-                slice_dims[2] = slice(None, shift)
+        padded = F.pad(val.unsqueeze(0).unsqueeze(0), pad_dims[::-1], mode='replicate')
+        
+        slice_dims = [slice(None)] * 3
+        if axis == 0:
+            if shift > 0: slice_dims[0] = slice(shift, None)
+            else: slice_dims[0] = slice(None, shift)
+        elif axis == 1:
+            if shift > 0: slice_dims[1] = slice(shift, None)
+            else: slice_dims[1] = slice(None, shift)
+        elif axis == 2:
+            if shift > 0: slice_dims[2] = slice(shift, None)
+            else: slice_dims[2] = slice(None, shift)
 
         padded = padded.squeeze(0).squeeze(0)
-        sliced = padded[slice_dims]
-        return sliced
+        neighbor = padded[slice_dims]
+        neighbor = torch.where(neighbor > -9000, neighbor, val)
+        
+        # Check sign consistency
+        neighbor_sign = torch.sign(neighbor.to(torch.float32))
+        return (neighbor_sign == sign)
 
-    left = get_neighbor(val, 1, axis=0) 
-    right = get_neighbor(val, -1, axis=0)
-    back = get_neighbor(val, 1, axis=1) 
-    front = get_neighbor(val, -1, axis=1)
-    down = get_neighbor(val, 1, axis=2)  
-    up = get_neighbor(val, -1, axis=2)
+    # Iteratively check neighbors and update mask
+    # directions: (shift, axis)
+    directions = [(1, 0), (-1, 0), (1, 1), (-1, 1), (1, 2), (-1, 2)]
+    
+    for shift, axis in directions:
+        is_same = check_neighbor_sign(shift, axis)
+        mask = mask & is_same.to(torch.int32)
 
-    def safe_where(neighbor):
-        return torch.where(neighbor > -9000, neighbor, val)
-
-    left = safe_where(left)
-    right = safe_where(right)
-    back = safe_where(back)
-    front = safe_where(front)
-    down = safe_where(down)
-    up = safe_where(up)
-
-    sign = torch.sign(val.to(torch.float32))
-    neighbors_sign = torch.stack([
-        torch.sign(left.to(torch.float32)),
-        torch.sign(right.to(torch.float32)),
-        torch.sign(back.to(torch.float32)),
-        torch.sign(front.to(torch.float32)),
-        torch.sign(down.to(torch.float32)),
-        torch.sign(up.to(torch.float32))
-    ], dim=0)
-
-    same_sign = torch.all(neighbors_sign == sign, dim=0)
-
-    mask = (~same_sign).to(torch.int32)
+    # Invert mask: we want 1 where ANY neighbor has different sign
+    mask = (~(mask.bool())).to(torch.int32)
     return mask * valid_mask.to(torch.int32)
 
 
@@ -264,6 +242,9 @@ class HierarchicalVolumeDecoding:
                 batch_queries = repeat(queries, "p c -> b p c", b=batch_size)
                 logits = geo_decoder(queries=batch_queries.to(latents.dtype), latents=latents)
                 batch_logits.append(logits)
+            
+            # Delayed allocation of next_logits
+            next_logits = torch.full(next_index.shape, -10000., dtype=dtype, device=device)
             grid_logits = torch.cat(batch_logits, dim=1)
             next_logits[nidx] = grid_logits[0, ..., 0]
             grid_logits = next_logits.unsqueeze(0)
@@ -423,6 +404,9 @@ class FlashVDMVolumeDecoding:
                 logits_grid_list.append(logits_grid)
             logits_grid = torch.cat(logits_grid_list, dim=1)
             grid_logits[index.indices] = logits_grid.squeeze(0).squeeze(-1)
+            
+            # Delayed allocation of next_logits
+            next_logits = torch.full(next_index.shape, -10000., dtype=dtype, device=device)
             next_logits[nidx] = grid_logits
             grid_logits = next_logits.unsqueeze(0)
 
