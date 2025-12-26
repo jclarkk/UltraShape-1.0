@@ -21,7 +21,7 @@ from ultrashape.pipelines import UltraShapePipeline
 # Global variables to cache the model
 MODEL_CACHE = {}
 
-def get_pipeline_cached(config_path, ckpt_path, device='cuda'):
+def get_pipeline_cached(config_path, ckpt_path, device='cuda', low_vram=False):
     # Check if we have a valid cached pipeline for this checkpoint
     if "pipeline" in MODEL_CACHE and MODEL_CACHE.get("ckpt_path") == ckpt_path:
         print("Using cached pipeline...")
@@ -72,6 +72,9 @@ def get_pipeline_cached(config_path, ckpt_path, device='cuda'):
         conditioner=conditioner,
         image_processor=image_processor
     )
+
+    if low_vram:
+        pipeline.enable_model_cpu_offload()
     
     MODEL_CACHE["pipeline"] = pipeline
     MODEL_CACHE["config"] = config
@@ -88,7 +91,8 @@ def predict(
     chunk_size,
     seed,
     remove_bg,
-    ckpt_path
+    ckpt_path,
+    low_vram
 ):
     # Aggressive memory cleanup at start
     gc.collect()
@@ -101,7 +105,7 @@ def predict(
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config not found at {config_path}")
             
-        pipeline, config = get_pipeline_cached(config_path, ckpt_path, device)
+        pipeline, config = get_pipeline_cached(config_path, ckpt_path, device, low_vram)
 
         token_num = config.model.params.vae_config.params.num_latents
         voxel_res = config.model.params.vae_config.params.voxel_query_res
@@ -173,6 +177,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="UltraShape Gradio App")
     parser.add_argument("--ckpt", type=str, required=True, help="Path to split checkpoint (.pt)")
     parser.add_argument("--share", action="store_true", help="Share the gradio app")
+    parser.add_argument("--low_vram", action="store_true", help="Optimize for low VRAM usage (not implemented)")
     
     args = parser.parse_args()
     
@@ -203,7 +208,7 @@ if __name__ == "__main__":
         # Better to pass it explicitly via a state or partial
         
         run_btn.click(
-            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt),
+            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt, args.low_vram),
             inputs=[image_input, mesh_input, steps, scale, octree_res, chunk_size, seed, remove_bg],
             outputs=[output_model]
         )
