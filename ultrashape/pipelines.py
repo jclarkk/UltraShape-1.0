@@ -759,7 +759,7 @@ class UltraShapePipeline(DiTPipeline):
                     latent_model_input = latents
 
                 # NOTE: we assume model get timesteps ranged from 0 to 1
-                timestep = t.expand(latent_model_input.shape[0]).to(latents.dtype)
+                timestep = t.expand(latent_model_input.shape[0]).to(latents.dtype).to(latent_model_input.device)
                 timestep = timestep / self.scheduler.config.num_train_timesteps
                 if voxel_cond is None:
                     noise_pred = self.model(latent_model_input, timestep, cond, guidance=guidance)
