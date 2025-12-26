@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import torch
+import gc
 import numpy as np
 from PIL import Image
 from omegaconf import OmegaConf
@@ -20,10 +21,18 @@ from ultrashape.pipelines import UltraShapePipeline
 # Global variables to cache the model
 MODEL_CACHE = {}
 
-def load_models_cached(config_path, ckpt_path, device='cuda'):
-    if "components" in MODEL_CACHE and MODEL_CACHE.get("ckpt_path") == ckpt_path:
-        print("Using cached models...")
-        return MODEL_CACHE["components"], MODEL_CACHE["config"]
+def get_pipeline_cached(config_path, ckpt_path, device='cuda'):
+    # Check if we have a valid cached pipeline for this checkpoint
+    if "pipeline" in MODEL_CACHE and MODEL_CACHE.get("ckpt_path") == ckpt_path:
+        print("Using cached pipeline...")
+        return MODEL_CACHE["pipeline"], MODEL_CACHE["config"]
+
+    # Clear old cache if it exists (e.g. different checkpoint)
+    if MODEL_CACHE:
+        print("Clearing old model cache...")
+        MODEL_CACHE.clear()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     print(f"Loading config from {config_path}...")
     config = OmegaConf.load(config_path)
@@ -55,19 +64,20 @@ def load_models_cached(config_path, ckpt_path, device='cuda'):
     if hasattr(vae, 'enable_flashvdm_decoder'):
         vae.enable_flashvdm_decoder()
 
-    components = {
-        "vae": vae,
-        "dit": dit,
-        "conditioner": conditioner,
-        "scheduler": scheduler,
-        "image_processor": image_processor,
-    }
+    print("Creating Pipeline...")
+    pipeline = UltraShapePipeline(
+        vae=vae,
+        model=dit,
+        scheduler=scheduler,
+        conditioner=conditioner,
+        image_processor=image_processor
+    )
     
-    MODEL_CACHE["components"] = components
+    MODEL_CACHE["pipeline"] = pipeline
     MODEL_CACHE["config"] = config
     MODEL_CACHE["ckpt_path"] = ckpt_path
     
-    return components, config
+    return pipeline, config
 
 def predict(
     image_input,
@@ -80,82 +90,84 @@ def predict(
     remove_bg,
     ckpt_path
 ):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config_path = "configs/infer_dit_refine.yaml"
-    
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config not found at {config_path}")
+    # Aggressive memory cleanup at start
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        config_path = "configs/infer_dit_refine.yaml"
         
-    components, config = load_models_cached(config_path, ckpt_path, device)
-    
-    pipeline = UltraShapePipeline(
-        vae=components['vae'],
-        model=components['dit'],
-        scheduler=components['scheduler'],
-        conditioner=components['conditioner'],
-        image_processor=components['image_processor']
-    )
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config not found at {config_path}")
+            
+        pipeline, config = get_pipeline_cached(config_path, ckpt_path, device)
 
-    token_num = config.model.params.vae_config.params.num_latents
-    voxel_res = config.model.params.vae_config.params.voxel_query_res
-    
-    print(f"Initializing Surface Loader (Token Num: {token_num})...")
-    loader = SharpEdgeSurfaceLoader(
-        num_sharp_points=204800,
-        num_uniform_points=204800,
-    )
-
-    print(f"Processing inputs...")
-    if image_input is None:
-        raise ValueError("Image input is required")
-    if mesh_input is None:
-        raise ValueError("Mesh input is required")
-
-    # Handle image input
-    if isinstance(image_input, dict): 
-        # In newer gradio versions Image component might return a dict for mask etc, but usually just PIL/numpy
-        # if type='pil' it is PIL.Image
-        pass
-    
-    image = image_input.convert("RGBA")
-    
-    if remove_bg or image.mode != 'RGBA':
-        rembg = BackgroundRemover()
-        image = rembg(image)
-    
-    # Handle mesh input - Gradio Model3D returns path to file
-    surface = loader(mesh_input, normalize_scale=scale).to(device, dtype=torch.float16)
-    pc = surface[:, :, :3] # [B, N, 3]
-    
-    # Voxelize
-    _, voxel_idx = voxelize_from_point(pc, token_num, resolution=voxel_res)
-    
-    print("Running diffusion process...")
-    generator = torch.Generator(device).manual_seed(int(seed))
-    
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        mesh_out_list, _ = pipeline(
-            image=image,
-            voxel_cond=voxel_idx,
-            generator=generator,
-            box_v=1.0,
-            mc_level=0.0,
-            octree_resolution=int(octree_res),
-            num_chunks=int(chunk_size),
-            num_inference_steps=int(steps),
+        token_num = config.model.params.vae_config.params.num_latents
+        voxel_res = config.model.params.vae_config.params.voxel_query_res
+        
+        print(f"Initializing Surface Loader (Token Num: {token_num})...")
+        loader = SharpEdgeSurfaceLoader(
+            num_sharp_points=204800,
+            num_uniform_points=204800,
         )
-    
-    # Save output
-    output_dir = "outputs_gradio"
-    os.makedirs(output_dir, exist_ok=True)
-    base_name = "output"
-    save_path = os.path.join(output_dir, f"{base_name}_refined.glb")
-    
-    mesh_out = mesh_out_list[0]
-    mesh_out.export(save_path)
-    print(f"Successfully saved to {save_path}")
-    
-    return save_path
+
+        print(f"Processing inputs...")
+        if image_input is None:
+            raise ValueError("Image input is required")
+        if mesh_input is None:
+            raise ValueError("Mesh input is required")
+
+        # Handle image input
+        if isinstance(image_input, dict): 
+            # In newer gradio versions Image component might return a dict for mask etc, but usually just PIL/numpy
+            # if type='pil' it is PIL.Image
+            pass
+        
+        image = image_input.convert("RGBA")
+        
+        if remove_bg or image.mode != 'RGBA':
+            rembg = BackgroundRemover()
+            image = rembg(image)
+        
+        # Handle mesh input - Gradio Model3D returns path to file
+        surface = loader(mesh_input, normalize_scale=scale).to(device, dtype=torch.float16)
+        pc = surface[:, :, :3] # [B, N, 3]
+        
+        # Voxelize
+        _, voxel_idx = voxelize_from_point(pc, token_num, resolution=voxel_res)
+        
+        print("Running diffusion process...")
+        generator = torch.Generator(device).manual_seed(int(seed))
+        
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            mesh_out_list, _ = pipeline(
+                image=image,
+                voxel_cond=voxel_idx,
+                generator=generator,
+                box_v=1.0,
+                mc_level=0.0,
+                octree_resolution=int(octree_res),
+                num_chunks=int(chunk_size),
+                num_inference_steps=int(steps),
+            )
+        
+        # Save output
+        output_dir = "outputs_gradio"
+        os.makedirs(output_dir, exist_ok=True)
+        base_name = "output"
+        save_path = os.path.join(output_dir, f"{base_name}_refined.glb")
+        
+        mesh_out = mesh_out_list[0]
+        mesh_out.export(save_path)
+        print(f"Successfully saved to {save_path}")
+        
+        return save_path
+
+    finally:
+        # Aggressive memory cleanup at end
+        gc.collect()
+        torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="UltraShape Gradio App")
