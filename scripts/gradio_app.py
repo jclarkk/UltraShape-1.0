@@ -193,4 +193,4 @@ if __name__ == "__main__":
             outputs=[output_model]
         )
         
-    demo.launch(share=args.share)
+    demo.launch(share=args.shar, server_name='0.0.0.0', server_port=7860)
