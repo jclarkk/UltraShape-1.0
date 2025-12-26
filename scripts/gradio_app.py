@@ -75,6 +75,7 @@ def predict(
     steps,
     scale,
     octree_res,
+    chunk_size,
     seed,
     remove_bg,
     ckpt_path
@@ -140,6 +141,7 @@ def predict(
             box_v=1.0,
             mc_level=0.0,
             octree_resolution=int(octree_res),
+            num_chunks=int(chunk_size),
             num_inference_steps=int(steps),
         )
     
@@ -175,6 +177,7 @@ if __name__ == "__main__":
                     steps = gr.Slider(minimum=1, maximum=200, value=50, step=1, label="Inference Steps")
                     scale = gr.Slider(minimum=0.1, maximum=2.0, value=0.99, label="Mesh Normalization Scale")
                     octree_res = gr.Slider(minimum=64, maximum=2048, value=1024, step=64, label="Octree Resolution")
+                    chunk_size = gr.Slider(minimum=512, maximum=10000, value=2048, step=512, label="Chunk Size (Lower if OOM)")
                     seed = gr.Number(value=42, label="Random Seed")
                     remove_bg = gr.Checkbox(label="Remove Background", value=False)
                 
@@ -188,8 +191,8 @@ if __name__ == "__main__":
         # Better to pass it explicitly via a state or partial
         
         run_btn.click(
-            fn=lambda img, mesh, s, sc, oct, sd, rm: predict(img, mesh, s, sc, oct, sd, rm, args.ckpt),
-            inputs=[image_input, mesh_input, steps, scale, octree_res, seed, remove_bg],
+            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt),
+            inputs=[image_input, mesh_input, steps, scale, octree_res, chunk_size, seed, remove_bg],
             outputs=[output_model]
         )
         
