@@ -231,6 +231,11 @@ class HierarchicalVolumeDecoding:
             for i in range(2 - expand_num):
                 next_index = dilate(next_index.unsqueeze(0)).squeeze(0)
             nidx = torch.where(next_index > 0)
+            
+            # Store shape before deleting
+            next_index_shape = next_index.shape
+            del next_index
+            torch.cuda.empty_cache()
 
             next_points = torch.stack(nidx, dim=1)
             next_points = (next_points * torch.tensor(resolution, dtype=next_points.dtype, device=device) +
@@ -244,7 +249,7 @@ class HierarchicalVolumeDecoding:
                 batch_logits.append(logits)
             
             # Delayed allocation of next_logits
-            next_logits = torch.full(next_index.shape, -10000., dtype=dtype, device=device)
+            next_logits = torch.full(next_index_shape, -10000., dtype=dtype, device=device)
             grid_logits = torch.cat(batch_logits, dim=1)
             next_logits[nidx] = grid_logits[0, ..., 0]
             grid_logits = next_logits.unsqueeze(0)
@@ -367,6 +372,11 @@ class FlashVDMVolumeDecoding:
             for i in range(2 - expand_num):
                 next_index = dilate(next_index.unsqueeze(0)).squeeze(0)
             nidx = torch.where(next_index > 0)
+            
+            # Store shape before deleting
+            next_index_shape = next_index.shape
+            del next_index
+            torch.cuda.empty_cache()
 
             next_points = torch.stack(nidx, dim=1)
             next_points = (next_points * torch.tensor(resolution, dtype=torch.float32, device=device) +
@@ -406,7 +416,7 @@ class FlashVDMVolumeDecoding:
             grid_logits[index.indices] = logits_grid.squeeze(0).squeeze(-1)
             
             # Delayed allocation of next_logits
-            next_logits = torch.full(next_index.shape, -10000., dtype=dtype, device=device)
+            next_logits = torch.full(next_index_shape, -10000., dtype=dtype, device=device)
             next_logits[nidx] = grid_logits
             grid_logits = next_logits.unsqueeze(0)
 
