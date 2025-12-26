@@ -252,6 +252,17 @@ class DiTPipeline:
         self.conditioner = conditioner
         self.image_processor = image_processor
         self.kwargs = kwargs
+        
+        self.components = {
+            "vae": vae,
+            "model": model,
+            "scheduler": scheduler,
+            "conditioner": conditioner,
+            "image_processor": image_processor,
+        }
+        if ref_model is not None:
+             self.components["ref_model"] = ref_model
+             
         self.to(device, dtype)
 
     def compile(self):
