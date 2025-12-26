@@ -142,7 +142,8 @@ def predict(
         _, voxel_idx = voxelize_from_point(pc, token_num, resolution=voxel_res)
         
         print("Running diffusion process...")
-        generator = torch.Generator(device).manual_seed(int(seed))
+        gen_device = "cpu" if low_vram else device
+        generator = torch.Generator(gen_device).manual_seed(int(seed))
         
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             mesh_out_list, _ = pipeline(
