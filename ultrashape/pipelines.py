@@ -123,19 +123,11 @@ def simplification(mesh_output, target_face_count):
     import meshlib.mrmeshnumpy as mrmeshnumpy
     import multiprocessing
 
-    V = mesh_output.mesh_v
-    F = mesh_output.mesh_f
-
-    if isinstance(V, torch.Tensor):
-        V = V.detach().cpu().numpy()
-    if isinstance(F, torch.Tensor):
-        F = F.detach().cpu().numpy()
-
-    V = np.asarray(V, dtype=np.float32)
-    F = np.asarray(F, dtype=np.int32)
+    V = np.array(mesh_output.mesh_v, dtype=np.float32, order="C", copy=False)
+    F = np.array(mesh_output.mesh_f, dtype=np.int32, order="C", copy=False)
 
     # Load mesh
-    mesh_mr = mrmeshnumpy.meshFromFacesVerts(V, F)
+    mesh_mr = mrmeshnumpy.meshFromFacesVerts(F, V)
 
     faces_to_delete = current_face_count - target_face_count
     #  Setup simplification parameters
