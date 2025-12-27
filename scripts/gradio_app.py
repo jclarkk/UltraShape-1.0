@@ -212,8 +212,8 @@ if __name__ == "__main__":
         # Better to pass it explicitly via a state or partial
         
         run_btn.click(
-            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt, args.low_vram, face_count),
-            inputs=[image_input, mesh_input, steps, scale, octree_res, chunk_size, seed, remove_bg],
+            fn=lambda img, mesh, s, sc, oct, chk, fc, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt, args.low_vram, fc),
+            inputs=[image_input, mesh_input, steps, scale, octree_res, chunk_size, face_count, seed, remove_bg],
             outputs=[output_model]
         )
         
