@@ -117,22 +117,29 @@ def export_to_trimesh(mesh_output, target_face_count):
 
 @synchronize_timer('Simplification')
 def simplification(mesh_output, target_face_count):
-    try:
-        # We import CuMesh here as per the reference logic provided
-        import cumesh
-    except ImportError as e:
-        raise ImportError(
-            "cumesh not found. Install CuMesh (e.g., `pip install git+https://github.com/JeffreyXiang/CuMesh --no-build-isolation`)."
-        ) from e
+    current_face_count = len(mesh_output.mesh_f)
 
-    cu_mesh = cumesh.CuMesh()
-    cu_mesh.init(mesh_output.mesh_v, mesh_output.mesh_f)
+    import meshlib.mrmeshpy as mrmeshpy
+    import meshlib.mrmeshnumpy as mrmeshnumpy
+    import multiprocessing
 
-    cu_mesh.simplify(target_face_count, verbose=False)
+    # Load mesh
+    mesh_mr = mrmeshnumpy.meshFromFacesVerts(mesh_output.mesh_v, mesh_output.mesh_f)
 
-    v, f = cu_mesh.read()
+    faces_to_delete = current_face_count - target_face_count
+    #  Setup simplification parameters
+    mesh_mr.packOptimally()
+    settings = mrmeshpy.DecimateSettings()
+    settings.maxDeletedFaces = faces_to_delete
+    settings.subdivideParts = multiprocessing.cpu_count()
+    settings.packMesh = True
 
-    return trimesh.Trimesh(v, f)
+    mrmeshpy.decimateMesh(mesh_mr, settings)
+
+    out_verts = mrmeshnumpy.getNumpyVerts(mesh_mr)
+    out_faces = mrmeshnumpy.getNumpyFaces(mesh_mr.topology)
+
+    return trimesh.Trimesh(out_verts, out_faces)
 
 
 def get_obj_from_str(string, reload=False):
