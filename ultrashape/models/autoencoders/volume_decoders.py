@@ -341,7 +341,19 @@ class FlashVDMVolumeDecoding:
             batch = queries.shape[0]
             batch_latents = repeat(latents.squeeze(0), "p c -> b p c", b=batch)
             processor.topk = True
-            logits = geo_decoder(queries=queries, latents=batch_latents)
+            
+            # Chunk queries along dim 1 if too large
+            if queries.shape[1] > num_chunks:
+                # print(f"Chunking queries: {queries.shape} with chunk size {num_chunks}")
+                batch_logits_sub = []
+                for sub_start in range(0, queries.shape[1], num_chunks):
+                    sub_queries = queries[:, sub_start: sub_start + num_chunks, :]
+                    logits = geo_decoder(queries=sub_queries, latents=batch_latents)
+                    batch_logits_sub.append(logits)
+                logits = torch.cat(batch_logits_sub, dim=1)
+            else:
+                logits = geo_decoder(queries=queries, latents=batch_latents)
+                
             batch_logits.append(logits)
         grid_logits = torch.cat(batch_logits, dim=0).reshape(
             mini_grid_num, mini_grid_num, mini_grid_num,
@@ -397,17 +409,24 @@ class FlashVDMVolumeDecoding:
             start_num = 0
             sum_num = 0
             for grid_index, count in zip(unique_values[0].cpu().tolist(), unique_values[1].cpu().tolist()):
-                if sum_num + count < num_chunks or sum_num == 0:
-                    sum_num += count
+                remaining_count = count
+                while remaining_count > 0:
+                    space_left = num_chunks - sum_num
+                    # If buffer is full, flush it
+                    if space_left <= 0:
+                        processor.topk = input_grid
+                        logits_grid = geo_decoder(queries=next_points[:, start_num:start_num + sum_num], latents=latents)
+                        start_num = start_num + sum_num
+                        logits_grid_list.append(logits_grid)
+                        input_grid = [[], []]
+                        sum_num = 0
+                        space_left = num_chunks
+                    
+                    take = min(remaining_count, space_left)
                     input_grid[0].append(grid_index)
-                    input_grid[1].append(count)
-                else:
-                    processor.topk = input_grid
-                    logits_grid = geo_decoder(queries=next_points[:, start_num:start_num + sum_num], latents=latents)
-                    start_num = start_num + sum_num
-                    logits_grid_list.append(logits_grid)
-                    input_grid = [[grid_index], [count]]
-                    sum_num = count
+                    input_grid[1].append(take)
+                    sum_num += take
+                    remaining_count -= take
             if sum_num > 0:
                 processor.topk = input_grid
                 logits_grid = geo_decoder(queries=next_points[:, start_num:start_num + sum_num], latents=latents)
