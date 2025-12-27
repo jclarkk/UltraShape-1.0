@@ -107,8 +107,8 @@ def export_to_trimesh(mesh_output, target_face_count):
                 outputs.append(None)
             else:
                 mesh.mesh_f = mesh.mesh_f[:, ::-1]
-                mesh_output = simplification(mesh, target_face_count)
-                outputs.append(mesh_output)
+                mesh_simplified = simplification(mesh, target_face_count)
+                outputs.append(mesh_simplified)
         return outputs
     else:
         mesh_output.mesh_f = mesh_output.mesh_f[:, ::-1]
@@ -123,8 +123,19 @@ def simplification(mesh_output, target_face_count):
     import meshlib.mrmeshnumpy as mrmeshnumpy
     import multiprocessing
 
+    V = mesh_output.mesh_v
+    F = mesh_output.mesh_f
+
+    if isinstance(V, torch.Tensor):
+        V = V.detach().cpu().numpy()
+    if isinstance(F, torch.Tensor):
+        F = F.detach().cpu().numpy()
+
+    V = np.asarray(V, dtype=np.float32)
+    F = np.asarray(F, dtype=np.int32)
+
     # Load mesh
-    mesh_mr = mrmeshnumpy.meshFromFacesVerts(mesh_output.mesh_v, mesh_output.mesh_f)
+    mesh_mr = mrmeshnumpy.meshFromFacesVerts(V, F)
 
     faces_to_delete = current_face_count - target_face_count
     #  Setup simplification parameters
