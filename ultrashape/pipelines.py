@@ -99,7 +99,7 @@ def retrieve_timesteps(
 
 
 @synchronize_timer('Export to trimesh')
-def export_to_trimesh(mesh_output):
+def export_to_trimesh(mesh_output, target_face_count):
     if isinstance(mesh_output, list):
         outputs = []
         for mesh in mesh_output:
@@ -107,13 +107,32 @@ def export_to_trimesh(mesh_output):
                 outputs.append(None)
             else:
                 mesh.mesh_f = mesh.mesh_f[:, ::-1]
-                mesh_output = trimesh.Trimesh(mesh.mesh_v, mesh.mesh_f)
+                mesh_output = simplification(mesh, target_face_count)
                 outputs.append(mesh_output)
         return outputs
     else:
         mesh_output.mesh_f = mesh_output.mesh_f[:, ::-1]
-        mesh_output = trimesh.Trimesh(mesh_output.mesh_v, mesh_output.mesh_f)
+        mesh_output = simplification(mesh_output, target_face_count)
         return mesh_output
+
+@synchronize_timer('Simplification')
+def simplification(mesh_output, target_face_count):
+    try:
+        # We import CuMesh here as per the reference logic provided
+        import cumesh
+    except ImportError as e:
+        raise ImportError(
+            "cumesh not found. Install CuMesh (e.g., `pip install git+https://github.com/JeffreyXiang/CuMesh --no-build-isolation`)."
+        ) from e
+
+    cu_mesh = cumesh.CuMesh()
+    cu_mesh.init(mesh_output.mesh_v, mesh_output.mesh_f)
+
+    cu_mesh.simplify(target_face_count, verbose=False)
+
+    v, f = cu_mesh.read()
+
+    return trimesh.Trimesh(v, f)
 
 
 def get_obj_from_str(string, reload=False):
@@ -662,6 +681,7 @@ class DiTPipeline:
         num_chunks=20000,
         octree_resolution=256,
         mc_algo='mc',
+        target_face_count=500000,
         enable_pbar=True
     ):
         if not output_type == "latent":
@@ -680,7 +700,7 @@ class DiTPipeline:
             outputs = latents
 
         if output_type == 'trimesh':
-            outputs = export_to_trimesh(outputs)
+            outputs = export_to_trimesh(outputs, target_face_count)
 
         return outputs
 
@@ -704,6 +724,7 @@ class UltraShapePipeline(DiTPipeline):
         mc_algo=None,
         num_chunks=8000,
         output_type: Optional[str] = "trimesh",
+        target_face_count: int = 500000,
         enable_pbar=True,
         mask = None,
         **kwargs,
@@ -782,6 +803,6 @@ class UltraShapePipeline(DiTPipeline):
         return self._export(
             latents,
             output_type,
-            box_v, mc_level, num_chunks, octree_resolution, mc_algo,
+            box_v, mc_level, num_chunks, octree_resolution, mc_algo, target_face_count,
             enable_pbar=enable_pbar,
         ), latents

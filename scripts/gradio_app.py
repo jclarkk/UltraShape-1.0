@@ -92,7 +92,8 @@ def predict(
     seed,
     remove_bg,
     ckpt_path,
-    low_vram
+    low_vram,
+    face_count
 ):
     # Aggressive memory cleanup at start
     gc.collect()
@@ -155,6 +156,7 @@ def predict(
                 octree_resolution=int(octree_res),
                 num_chunks=int(chunk_size),
                 num_inference_steps=int(steps),
+                target_face_count=int(face_count),
             )
         
         # Save output
@@ -196,6 +198,7 @@ if __name__ == "__main__":
                     scale = gr.Slider(minimum=0.1, maximum=2.0, value=0.99, label="Mesh Normalization Scale")
                     octree_res = gr.Slider(minimum=64, maximum=2048, value=1024, step=64, label="Octree Resolution")
                     chunk_size = gr.Slider(minimum=512, maximum=10000, value=2048, step=512, label="Chunk Size (Lower if OOM)")
+                    face_count = gr.Slider(minimum=10000, maximum=2000000, value=500000, step=10000, label="Target Face Count")
                     seed = gr.Number(value=42, label="Random Seed")
                     remove_bg = gr.Checkbox(label="Remove Background", value=False)
                 
@@ -209,7 +212,7 @@ if __name__ == "__main__":
         # Better to pass it explicitly via a state or partial
         
         run_btn.click(
-            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt, args.low_vram),
+            fn=lambda img, mesh, s, sc, oct, chk, sd, rm: predict(img, mesh, s, sc, oct, chk, sd, rm, args.ckpt, args.low_vram, face_count),
             inputs=[image_input, mesh_input, steps, scale, octree_res, chunk_size, seed, remove_bg],
             outputs=[output_model]
         )
