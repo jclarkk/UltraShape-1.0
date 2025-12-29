@@ -5,7 +5,7 @@ model:
     vae_config:
       target: ultrashape.models.autoencoders.ShapeVAE
       params:
-        num_latents: &token_num 32768 # infer token_num
+        num_latents: &token_num 8192
         embed_dim: 64
         num_freqs: 8
         include_pi: false
