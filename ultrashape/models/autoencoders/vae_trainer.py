@@ -82,6 +82,38 @@ class VAETrainer(pl.LightningModule):
                 if ik in k:
                     print("Deleting key {} from state_dict.".format(k))
                     del state_dict[k]
+        
+        # # ==================== Weight Surgery Start ====================
+        # old_key_base = "vae_model.encoder.input_proj"
+        # old_weight_key = f"{old_key_base}.weight"
+        # old_bias_key = f"{old_key_base}.bias"
+
+        # if old_weight_key in state_dict:
+        #     print(f"[*] Detected legacy '{old_key_base}' in checkpoint. Performing weight surgery...")
+            
+        #     src_weight = state_dict[old_weight_key]
+        #     src_bias = state_dict[old_bias_key]
+            
+        #     encoder = self.vae_model.encoder
+        #     fourier_dim = encoder.fourier_embedder.out_dim
+
+        #     # --- A. input_proj_kv ---
+        #     # shape: [width, fourier_dim + point_feats]
+        #     encoder.input_proj_kv.weight.data.copy_(src_weight)
+        #     encoder.input_proj_kv.bias.data.copy_(src_bias)
+        #     print(f"    -> Loaded input_proj_kv from {old_key_base}")
+
+        #     # --- B. input_proj_q ---
+        #     # shape: [width, fourier_dim]
+        #     sliced_weight = src_weight[:, :fourier_dim]
+        #     encoder.input_proj_q.weight.data.copy_(sliced_weight)
+        #     encoder.input_proj_q.bias.data.copy_(src_bias)
+        #     print(f"    -> Loaded input_proj_q (sliced) from {old_key_base}")
+
+        #     del state_dict[old_weight_key]
+        #     if old_bias_key in state_dict:
+        #         del state_dict[old_bias_key]
+        # # ==================== Weight Surgery End ====================
 
         missing, unexpected = self.load_state_dict(state_dict, strict=False)
         print(f"Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys")
@@ -120,8 +152,6 @@ class VAETrainer(pl.LightningModule):
         pl.seed_everything(self.trainer.global_rank)
 
     def forward(self, batch):
-        # with torch.autocast(device_type="cuda", dtype=torch.float16):
-        # sup_pc_s_list = [batch["sup_near_uniform"], batch["sup_near_sharp"]]
         sup_pc_s_list = [batch["sup_near_uniform"], batch["sup_near_sharp"], batch["sup_space"]]
         rand_points = [sup_pc_s[:,:,:3] for sup_pc_s in sup_pc_s_list]
         rand_points_val = [sup_pc_s[:,:,3:] for sup_pc_s in sup_pc_s_list]
@@ -141,9 +171,6 @@ class VAETrainer(pl.LightningModule):
         criteria = torch.nn.MSELoss()
         criteria2 = torch.nn.L1Loss()
         loss_logits = criteria(logits, target).mean() + criteria2(logits, target).mean()
-        # scale = (logits * target).sum() / (target * target).sum() 
-        # scale = (logits / target).mean()
-        # print("scale:", scale)
         loss = self.loss_cfg.lambda_logits * loss_logits + self.loss_cfg.lambda_kl * loss_kl
 
         loss_dict = {

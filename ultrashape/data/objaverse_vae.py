@@ -55,8 +55,6 @@ class ObjaverseDataset(Dataset):
         tsdf_threshold: float = 0.05,
         sharpedge_label: bool = False,
         return_normal: bool = False,
-        deterministic = False,
-        worker_seed = None,
     ):
         super().__init__()
 
@@ -120,10 +118,10 @@ class ObjaverseDataset(Dataset):
         surface_og_n = np.concatenate([surface_og, normal], axis=1) 
         rng = np.random.default_rng()
 
-        assert surface_og_n.shape[0] == 300000, f"assume that suface points = 10w uniform + 20w curvature, but {len(surface_og_n)=}"
-
-        coarse_surface = surface_og_n[:100000]
-        sharp_surface = surface_og_n[100000:]
+        # hard code: first 300k are uniform, last 300k are sharp
+        assert surface_og_n.shape[0] == 600000, f"assume that suface points = 30w uniform + 30w curvature, but {len(surface_og_n)=}"
+        coarse_surface = surface_og_n[:300000]
+        sharp_surface = surface_og_n[300000:]
 
         surface_normal = []
         

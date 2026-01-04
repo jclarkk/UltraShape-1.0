@@ -91,17 +91,13 @@ class ObjaverseDataset(Dataset):
         data_json,
         sample_root,
         image_path,
-        # cond_stage_key: str = "image",
         image_transform = None,
         pc_size: int = 2048,
         pc_sharpedge_size: int = 2048,
         sharpedge_label: bool = False,
         return_normal: bool = False,
-        deterministic = False,
-        worker_seed = None,
         padding = True,
         padding_ratio_range=[1.15, 1.15],
-        split: str = "train"
     ):
         super().__init__()
 
@@ -140,10 +136,10 @@ class ObjaverseDataset(Dataset):
         surface_og_n = np.concatenate([surface_og, normal], axis=1) 
         rng = np.random.default_rng()
 
-        assert surface_og_n.shape[0] == 300000, f"assume that suface points = 10w uniform + 20w curvature, but {len(surface_og_n)=}"
-
-        coarse_surface = surface_og_n[:100000]
-        sharp_surface = surface_og_n[100000:]
+        # hard code: first 300k are uniform, last 300k are sharp
+        assert surface_og_n.shape[0] == 600000, f"assume that suface points = 30w uniform + 30w curvature, but {len(surface_og_n)=}"
+        coarse_surface = surface_og_n[:300000]
+        sharp_surface = surface_og_n[300000:]
 
         surface_normal = []
         rng = np.random.default_rng()

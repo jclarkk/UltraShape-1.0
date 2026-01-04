@@ -9,29 +9,25 @@ from torch.optim import lr_scheduler
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info
 from pytorch_lightning.utilities import rank_zero_only
-from hy3dshape.pipelines import export_to_trimesh
+from ultrashape.pipelines import export_to_trimesh
 
 from ...utils.ema import LitEma
 from ...utils.misc import instantiate_from_config, instantiate_non_trainable_model, instantiate_vae_model, instantiate_vae_model_local
-
 
 
 class Diffuser(pl.LightningModule):
     def __init__(
         self,
         *,
-        first_stage_config,
-        cond_stage_config,
-        denoiser_cfg,
+        vae_config,
+        cond_config,
+        dit_cfg,
         scheduler_cfg,
         optimizer_cfg,
         pipeline_cfg=None,
         image_processor_cfg=None,
         lora_config=None,
         ema_config=None,
-        voxel_cond_mode: str = "voxel_idx",
-        first_stage_key: str = "surface",
-        cond_stage_key: str = "image",
         scale_by_std: bool = False,
         z_scale_factor: float = 1.0,
         ckpt_path: Optional[str] = None,
@@ -39,9 +35,6 @@ class Diffuser(pl.LightningModule):
         torch_compile: bool = False,
     ):
         super().__init__()
-        self.first_stage_key = first_stage_key
-        self.cond_stage_key = cond_stage_key
-        self.voxel_cond_mode = voxel_cond_mode
 
         # ========= init optimizer config ========= #
         self.optimizer_cfg = optimizer_cfg
@@ -55,10 +48,10 @@ class Diffuser(pl.LightningModule):
             self.sample_fn = self.sampler.sample_ode(**scheduler_cfg.sampler.ode_params)
 
         # ========= init the model ========= #
-        self.denoiser_cfg = denoiser_cfg
-        self.model = instantiate_from_config(denoiser_cfg, device=None, dtype=None)
+        self.dit_cfg = dit_cfg
+        self.model = instantiate_from_config(dit_cfg, device=None, dtype=None)
         
-        self.cond_stage_model = instantiate_from_config(cond_stage_config)
+        self.cond_stage_model = instantiate_from_config(cond_config)
 
         self.ckpt_path = ckpt_path
         if ckpt_path is not None:
@@ -89,8 +82,7 @@ class Diffuser(pl.LightningModule):
             print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
         # ========= init vae at last to prevent it is overridden by loaded ckpt ========= #
-        # self.first_stage_model = instantiate_non_trainable_model(first_stage_config)
-        self.first_stage_model = instantiate_vae_model_local(first_stage_config)
+        self.first_stage_model = instantiate_vae_model_local(vae_config)
         self.first_stage_model.enable_flashvdm_decoder()
 
         self.scale_by_std = scale_by_std
@@ -235,23 +227,6 @@ class Diffuser(pl.LightningModule):
 
         return optimizers, schedulers
 
-    @rank_zero_only
-    @torch.no_grad()
-    def on_train_batch_start(self, batch, batch_idx):
-        # only for very first batch
-        if self.scale_by_std and self.current_epoch == 0 and self.global_step == 0 \
-            and batch_idx == 0 and self.ckpt_path is None:
-            # set rescale weight to 1./std of encodings
-            print("### USING STD-RESCALING ###")
-
-            z_q = self.encode_first_stage(batch[self.first_stage_key])
-            z = z_q.detach()
-
-            del self.z_scale_factor
-            self.register_buffer("z_scale_factor", 1. / z.flatten().std())
-            print(f"setting self.z_scale_factor to {self.z_scale_factor}")
-
-            print("### USING STD-RESCALING ###")
 
     def on_train_batch_end(self, *args, **kwargs):
         if self.ema_config is not None:
@@ -266,7 +241,7 @@ class Diffuser(pl.LightningModule):
 
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             with torch.no_grad():
-                latents, voxel_idx = self.first_stage_model.encode(batch[self.first_stage_key], sample_posterior=True, need_voxel=True)
+                latents, voxel_idx = self.first_stage_model.encode(batch["surface"], sample_posterior=True, need_voxel=True)
                 latents = self.z_scale_factor * latents
                 # print(latents.shape)
                 
