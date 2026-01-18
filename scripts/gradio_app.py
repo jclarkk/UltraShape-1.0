@@ -50,11 +50,20 @@ def get_pipeline_cached(config_path, ckpt_path, device='cuda', low_vram=False):
     image_processor = instantiate_from_config(config.model.params.image_processor_cfg)
 
     print(f"Loading weights from {ckpt_path}...")
-    weights = torch.load(ckpt_path, map_location='cpu')
-
-    vae.load_state_dict(weights['vae'], strict=True)
-    dit.load_state_dict(weights['dit'], strict=True)
-    conditioner.load_state_dict(weights['conditioner'], strict=True)
+    
+    is_flashpack_dir = os.path.isdir(ckpt_path)
+    
+    if is_flashpack_dir:
+        print("Detected Flashpack directory, loading with assign_from_file...")
+        from flashpack.deserialization import assign_from_file
+        assign_from_file(vae, os.path.join(ckpt_path, "vae.flashpack"), device=device, strict=False)
+        assign_from_file(dit, os.path.join(ckpt_path, "dit.flashpack"), device=device, strict=False)
+        assign_from_file(conditioner, os.path.join(ckpt_path, "conditioner.flashpack"), device=device, strict=False)
+    else:
+        weights = torch.load(ckpt_path, map_location='cpu')
+        vae.load_state_dict(weights['vae'], strict=True)
+        dit.load_state_dict(weights['dit'], strict=True)
+        conditioner.load_state_dict(weights['conditioner'], strict=True)
 
     vae.eval().to(device)
     dit.eval().to(device)

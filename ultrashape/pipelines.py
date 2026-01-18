@@ -153,36 +153,72 @@ class DiTPipeline:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
 
-        # load ckpt
-        if use_safetensors:
-            ckpt_path = ckpt_path.replace('.ckpt', '.safetensors')
-        if not os.path.exists(ckpt_path):
-            raise FileNotFoundError(f"Model file {ckpt_path} not found")
-        logger.info(f"Loading model from {ckpt_path}")
+        # Check if ckpt_path is a directory (Flashpack)
+        is_flashpack_dir = os.path.isdir(ckpt_path)
+        
+        ckpt = {}
+        if not is_flashpack_dir:
+            # load ckpt
+            if use_safetensors:
+                ckpt_path = ckpt_path.replace('.ckpt', '.safetensors')
+            if not os.path.exists(ckpt_path):
+                raise FileNotFoundError(f"Model file {ckpt_path} not found")
+            logger.info(f"Loading model from {ckpt_path}")
 
-        if use_safetensors:
-            # parse safetensors
-            import safetensors.torch
-            safetensors_ckpt = safetensors.torch.load_file(ckpt_path, device='cpu')
-            ckpt = {}
-            for key, value in safetensors_ckpt.items():
-                model_name = key.split('.')[0]
-                new_key = key[len(model_name) + 1:]
-                if model_name not in ckpt:
-                    ckpt[model_name] = {}
-                ckpt[model_name][new_key] = value
+            if use_safetensors:
+                # parse safetensors
+                import safetensors.torch
+                safetensors_ckpt = safetensors.torch.load_file(ckpt_path, device='cpu')
+                for key, value in safetensors_ckpt.items():
+                    model_name = key.split('.')[0]
+                    new_key = key[len(model_name) + 1:]
+                    if model_name not in ckpt:
+                        ckpt[model_name] = {}
+                    ckpt[model_name][new_key] = value
+            else:
+                ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=True)
         else:
-            ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=True)
+            logger.info(f"Loading flashpack model from {ckpt_path}")
+            from flashpack.deserialization import assign_from_file
+
         # load model
-        model = instantiate_from_config(config['model'])
-        model.load_state_dict(ckpt['model'])
-        vae = instantiate_from_config(config['vae'])
-        vae.load_state_dict(ckpt['vae'], strict=False)
-        conditioner = instantiate_from_config(config['conditioner'])
-        if 'conditioner' in ckpt:
+        # The config structure in infer_dit_refine.yaml has 'model' -> 'params' -> components
+        # We need to extract components from there if they exist, otherwise fallback to top-level
+        
+        model_config = config.get('model', {})
+        model_params = model_config.get('params', {})
+        
+        # DiT Model
+        dit_cfg = model_params.get('dit_cfg', config.get('model')) # Fallback for other configs
+        model = instantiate_from_config(dit_cfg)
+        if is_flashpack_dir:
+            assign_from_file(model, os.path.join(ckpt_path, "dit.flashpack"), device=device, strict=False)
+        else:
+            model.load_state_dict(ckpt['model'])
+
+        # VAE
+        vae_cfg = model_params.get('vae_config', config.get('vae'))
+        vae = instantiate_from_config(vae_cfg)
+        if is_flashpack_dir:
+            assign_from_file(vae, os.path.join(ckpt_path, "vae.flashpack"), device=device, strict=False)
+        else:
+            vae.load_state_dict(ckpt['vae'], strict=False)
+
+        # Conditioner
+        cond_cfg = model_params.get('conditioner_config', config.get('conditioner'))
+        conditioner = instantiate_from_config(cond_cfg)
+        if is_flashpack_dir:
+            assign_from_file(conditioner, os.path.join(ckpt_path, "conditioner.flashpack"), device=device, strict=False)
+        elif 'conditioner' in ckpt:
             conditioner.load_state_dict(ckpt['conditioner'])
-        image_processor = instantiate_from_config(config['image_processor'])
-        scheduler = instantiate_from_config(config['scheduler'])
+
+        # Image Processor
+        ip_cfg = model_params.get('image_processor_cfg', config.get('image_processor'))
+        image_processor = instantiate_from_config(ip_cfg)
+        
+        # Scheduler
+        sched_cfg = model_params.get('scheduler_cfg', config.get('scheduler'))
+        scheduler = instantiate_from_config(sched_cfg)
 
         model_kwargs = dict(
             vae=vae,
